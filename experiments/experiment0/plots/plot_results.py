@@ -28,8 +28,8 @@ def plot_results_rl_cache():
         - Y-axis: Cache hit probability (log scale)
         - Title shows mean cache hit ratio
     """
-    input_file = os.path.join(EXPERIMENT_DIR, 'results_rl_cache.npz')
-    output_file = os.path.join(EXPERIMENT_DIR, 'results_rl_cache.png')
+    input_file = os.path.join(REPO_ROOT, 'results_rl_cache.npz')
+    output_file = os.path.join(REPO_ROOT, 'results_rl_cache.png')
 
     if not os.path.exists(input_file):
         print(f'Error: {input_file} not found.')
