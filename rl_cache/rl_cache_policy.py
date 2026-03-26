@@ -474,6 +474,89 @@ class RLCachePolicy(Policy):
         self._episode_count = weights['episode_count']
         self._total_steps = weights['total_steps']
 
+    def save_model(self, path: str):
+        """Save trained neural network model to a .pt file.
+
+        Saves everything needed to resume training or run inference:
+            - Neural network weights (state_dict)
+            - Optimizer state (for resuming training)
+            - Per-content statistics (access counts, inter-arrival times)
+            - Training progress (episode count, total steps)
+            - Architecture config (to reconstruct the network)
+
+        :param path: File path to save the model (e.g., 'model.pt')
+        """
+        checkpoint = {
+            # Architecture config (needed to reconstruct network for loading)
+            'feature_dim': self._feature_dim,
+            'hidden_dim': self._hidden_dim,
+            'num_layers': self._num_layers,
+
+            # Neural network weights
+            'net_state_dict': self._net.state_dict(),
+
+            # Optimizer state (for resuming training)
+            'optimizer_state_dict': self._optimizer.state_dict(),
+
+            # Per-content statistics
+            'access_counts': self._access_counts,
+            'last_access_time': self._last_access_time,
+            'inter_arrival': self._inter_arrival,
+            'arrival_nums': self._arrival_nums,
+            'tau_sums': self._tau_sums,
+
+            # Training progress
+            'episode_count': self._episode_count,
+            'total_steps': self._total_steps,
+
+            # Config values needed for inference
+            'n': self._n,
+            'b_0': self._b_0,
+            'lr': self._lr,
+            'gamma': self._gamma,
+            'admit_ttl': self._admit_ttl,
+            'reject_ttl': self._reject_ttl,
+            'max_lambda': self._max_lambda,
+        }
+        torch.save(checkpoint, path)
+        logger.info(f'Model saved to {path} (episode {self._episode_count}, '
+                    f'{self._total_steps} total steps)')
+
+    def load_model(self, path: str):
+        """Load a trained neural network model from a .pt file.
+
+        Restores neural network weights, optimizer state, and per-content statistics.
+        After loading, the policy can immediately run inference (test mode) or
+        resume training (train mode).
+
+        :param path: File path to load the model from (e.g., 'model.pt')
+        """
+        checkpoint = torch.load(path, map_location=self._device)
+
+        # Restore neural network weights
+        self._net.load_state_dict(checkpoint['net_state_dict'])
+
+        # Restore optimizer state (for resuming training)
+        if 'optimizer_state_dict' in checkpoint:
+            self._optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+
+        # Restore per-content statistics
+        self._access_counts = checkpoint['access_counts']
+        self._last_access_time = checkpoint.get('last_access_time',
+                                                 np.zeros(self._n, dtype=np.float64))
+        self._inter_arrival = checkpoint['inter_arrival']
+        self._arrival_nums = checkpoint.get('arrival_nums',
+                                             np.zeros(self._n, dtype=np.int64))
+        self._tau_sums = checkpoint.get('tau_sums',
+                                         np.zeros(self._n, dtype=np.float64))
+
+        # Restore training progress
+        self._episode_count = checkpoint['episode_count']
+        self._total_steps = checkpoint['total_steps']
+
+        logger.info(f'Model loaded from {path} (episode {self._episode_count}, '
+                    f'{self._total_steps} total steps)')
+
     @override(Policy)
     def export_model(self, export_dir: str):
         """Exports neural network model to HDF5 file.

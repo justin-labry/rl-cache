@@ -1,21 +1,21 @@
 # RL-Cache Experiment 0 Main Script
 #
-# Two-phase execution:
-#   Phase 1 (Training):  Episodes 0 ~ NUM_TRAIN_EPISODES-1
-#       - Neural network learns via REINFORCE policy gradient
-#       - Exploration (epsilon-greedy) is active
-#       - Callbacks do NOT save results
+# Usage:
+#   python main.py --mode train   # Train NN and save to model.pt
+#   python main.py --mode test    # Load model.pt and evaluate
+#   python main.py --mode both    # Train → save → evaluate (default)
 #
-#   Phase 2 (Evaluation): Episodes NUM_TRAIN_EPISODES ~ NUM_EPISODES-1
-#       - Neural network is FROZEN (no learning, no exploration)
-#       - Greedy actions only (action = argmax P(admit))
-#       - Callbacks save per-content hit ratios to NPZ
+# The --mode flag controls the execution flow:
+#   train: Runs NUM_TRAIN_EPISODES, saves model to MODEL_PATH, exits
+#   test:  Loads model from MODEL_PATH, runs NUM_EVAL_EPISODES, saves results to NPZ
+#   both:  Train phase → save model → eval phase → save results (legacy behavior)
 
 # Author: labry
 
 import sys
 import os
 import time
+import argparse
 
 # Add IcarusGym and project root to Python path
 sys.path.insert(0, '/home/labry/git/IcarusGym')
@@ -35,19 +35,12 @@ def env_creator(env_config):
     return gym.make(id='TtlCache-v0', config=env_config)
 
 
-def main():
-    """Main function to set up and run the RL-Cache training + evaluation."""
-    # Configure logging
-    import logging
-    logging.basicConfig(level=logging.INFO)
-    logging.getLogger('icarusgym').setLevel(logging.WARNING)
-    logging.getLogger('icarus').setLevel(logging.WARNING)
-    logging.getLogger('rl_cache').setLevel(logging.INFO)
-    logging.getLogger('experiments').setLevel(logging.INFO)
-    logging.getLogger('root').setLevel(logging.WARNING)
+def create_agent(conf):
+    """Create and configure the RLCacheAgent.
 
-    # Icarus simulator config is a SEPARATE file (icarus_config.py) from agent config (config.py)
-    # to avoid import issues when IcarusGym's settings.read_from() loads it
+    :param conf: Configuration module (experiments.experiment0.config)
+    :return: Configured RLCacheAgent instance
+    """
     experiment_dir = os.path.dirname(os.path.abspath(__file__))
     env_config = {
         'config_path': os.path.join(experiment_dir, conf.TTLSIM_CONFIG_PATH),
@@ -57,13 +50,6 @@ def main():
         'cache_size_max': conf.CACHE_SIZE_MAX
     }
 
-    # Initialize Ray
-    ray.init(ignore_reinit_error=True, log_to_driver=False)
-
-    # Register the custom environment
-    register_env('TtlCache-v0', env_creator)
-
-    # Create algorithm config
     config = RLCacheAgent.get_default_config().copy()
     config.update({
         # Callbacks
@@ -107,85 +93,132 @@ def main():
         'batch_mode': 'complete_episodes',
     })
 
+    return RLCacheAgent(config=config)
+
+
+def run_train(agent, conf):
+    """Run training phase: train NN and save model.
+
+    :param agent: RLCacheAgent instance
+    :param conf: Configuration module
+    """
+    print(f'\n[TRAIN] Training ({conf.NUM_TRAIN_EPISODES} episodes)...')
+    print('-' * 70)
+
+    model_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), conf.MODEL_PATH)
+
+    for ep in range(conf.NUM_TRAIN_EPISODES):
+        results = agent.train()
+
+        hit_rate = results.get('hit_rate', float('nan'))
+        explore_rate = results.get('explore_rate', float('nan'))
+        policy_loss = results.get('policy_loss', float('nan'))
+
+        print(f'  [TRAIN] Episode {ep + 1:3d}/{conf.NUM_TRAIN_EPISODES} | '
+              f'Hit Rate: {hit_rate:.4f} | '
+              f'Loss: {policy_loss:.4f} | '
+              f'Explore: {explore_rate:.4f}')
+
+    # Save the trained model
+    policy = agent.get_policy('default_policy')
+    policy.save_model(model_path)
+    print(f'\nModel saved to: {model_path}')
+
+
+def run_test(agent, conf):
+    """Run test phase: load model and evaluate.
+
+    :param agent: RLCacheAgent instance
+    :param conf: Configuration module
+    """
+    model_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), conf.MODEL_PATH)
+
+    # Load trained model
+    policy = agent.get_policy('default_policy')
+    policy.load_model(model_path)
+    print(f'Model loaded from: {model_path}')
+
+    # Switch to eval mode: no exploration, no learning
+    policy.set_eval_mode(True)
+
+    print(f'\n[TEST] Evaluation ({conf.NUM_EVAL_EPISODES} episodes)...')
+    print('-' * 70)
+
+    eval_hit_rates = []
+    for ep in range(conf.NUM_EVAL_EPISODES):
+        results = agent.train()  # train() drives the episode loop; policy ignores learning in eval mode
+
+        hit_rate = results.get('hit_rate', float('nan'))
+        eval_hit_rates.append(hit_rate)
+
+        print(f'  [TEST]  Episode {ep + 1:3d}/{conf.NUM_EVAL_EPISODES} | '
+              f'Hit Rate: {hit_rate:.4f}')
+
+    mean_eval_hit_rate = sum(eval_hit_rates) / len(eval_hit_rates) if eval_hit_rates else 0.0
+    print(f'\n  Mean eval hit rate: {mean_eval_hit_rate:.4f}')
+    print(f'  Results saved to:  {conf.RESULT_OUTPUT_FILE_NAME}.npz')
+    return mean_eval_hit_rate
+
+
+def main():
+    """Main entry point."""
+    parser = argparse.ArgumentParser(description='RL-Cache Experiment')
+    parser.add_argument('--mode', type=str, default='both', choices=['train', 'test', 'both'],
+                        help='Execution mode: train (train+save), test (load+eval), both (train+save+eval)')
+    args = parser.parse_args()
+
+    # Configure logging
+    import logging
+    logging.basicConfig(level=logging.INFO)
+    logging.getLogger('icarusgym').setLevel(logging.WARNING)
+    logging.getLogger('icarus').setLevel(logging.WARNING)
+    logging.getLogger('rl_cache').setLevel(logging.INFO)
+    logging.getLogger('experiments').setLevel(logging.INFO)
+    logging.getLogger('root').setLevel(logging.WARNING)
+
+    # Initialize Ray
+    ray.init(ignore_reinit_error=True, log_to_driver=False)
+
+    # Register the custom environment
+    register_env('TtlCache-v0', env_creator)
+
     # Create the agent
-    agent = RLCacheAgent(config=config)
+    agent = create_agent(conf)
 
     try:
         print('=' * 70)
-        print(f'RL-Cache Experiment 0')
+        print(f'RL-Cache Experiment 0  [mode: {args.mode}]')
         print(f'  Neural network: {conf.NUM_LAYERS} layers, {conf.HIDDEN_DIM} hidden dim')
         print(f'  Learning rate: {conf.LR}, Gamma: {conf.GAMMA}')
         print(f'  Admit TTL: {conf.ADMIT_TTL}, Reject TTL: {conf.REJECT_TTL}')
         print(f'  Contents: {conf.N}, Cache size: {conf.B_0}')
-        print(f'  Training episodes:   {conf.NUM_TRAIN_EPISODES}')
-        print(f'  Evaluation episodes: {conf.NUM_EVAL_EPISODES}')
+        print(f'  Model path: {conf.MODEL_PATH}')
         print('=' * 70)
 
         start_time = time.time()
-        iteration_count = 0
 
-        # ================================================================
-        # Phase 1: TRAINING
-        # ================================================================
-        print(f'\n[Phase 1] Training ({conf.NUM_TRAIN_EPISODES} episodes)...')
-        print('-' * 70)
+        if args.mode == 'train':
+            # Train only: train NN → save model → exit
+            run_train(agent, conf)
 
-        for ep in range(conf.NUM_TRAIN_EPISODES):
-            iteration_count += 1
-            results = agent.train()
+        elif args.mode == 'test':
+            # Test only: load model → evaluate → save results
+            run_test(agent, conf)
 
-            hit_rate = results.get('hit_rate', float('nan'))
-            explore_rate = results.get('explore_rate', float('nan'))
-            policy_loss = results.get('policy_loss', float('nan'))
+        elif args.mode == 'both':
+            # Full pipeline: train → save → eval
+            run_train(agent, conf)
+            run_test(agent, conf)
 
-            print(f'  [TRAIN] Episode {ep + 1:3d}/{conf.NUM_TRAIN_EPISODES} | '
-                  f'Hit Rate: {hit_rate:.4f} | '
-                  f'Loss: {policy_loss:.4f} | '
-                  f'Explore: {explore_rate:.4f}')
-
-        train_time = time.time() - start_time
-        print(f'\nTraining complete. Time: {train_time:.1f}s')
-
-        # ================================================================
-        # Phase 2: EVALUATION (freeze model)
-        # ================================================================
-        print(f'\n[Phase 2] Evaluation ({conf.NUM_EVAL_EPISODES} episodes)...')
-        print('-' * 70)
-
-        # Switch policy to eval mode: no exploration, no learning
-        policy = agent.get_policy('default_policy')
-        policy.set_eval_mode(True)
-
-        eval_hit_rates = []
-        for ep in range(conf.NUM_EVAL_EPISODES):
-            iteration_count += 1
-            results = agent.train()  # Still calls train() but policy ignores learning
-
-            hit_rate = results.get('hit_rate', float('nan'))
-            eval_hit_rates.append(hit_rate)
-
-            print(f'  [EVAL]  Episode {ep + 1:3d}/{conf.NUM_EVAL_EPISODES} | '
-                  f'Hit Rate: {hit_rate:.4f}')
-
-        # ================================================================
-        # Summary
-        # ================================================================
         total_time = time.time() - start_time
-        mean_eval_hit_rate = sum(eval_hit_rates) / len(eval_hit_rates) if eval_hit_rates else 0.0
-
         print('\n' + '=' * 70)
-        print(f'Experiment Complete')
-        print(f'  Total time:          {total_time:.1f}s')
-        print(f'  Training episodes:   {conf.NUM_TRAIN_EPISODES}')
-        print(f'  Evaluation episodes: {conf.NUM_EVAL_EPISODES}')
-        print(f'  Mean eval hit rate:  {mean_eval_hit_rate:.4f}')
-        print(f'  Results saved to:    {conf.RESULT_OUTPUT_FILE_NAME}.npz')
+        print(f'Done. Total time: {total_time:.1f}s')
         print('=' * 70)
 
     except KeyboardInterrupt:
-        print('\nTraining interrupted by user.')
+        print('\nInterrupted by user.')
     except Exception as e:
-        print(f'\nAn error occurred: {e}')
+        print(f'\nError: {e}')
         import traceback
         traceback.print_exc()
     finally:

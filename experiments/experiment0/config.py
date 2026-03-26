@@ -15,21 +15,22 @@ sys.path.insert(0, '/home/labry/git/rl-cache')
 from rl_cache.evaluation.rl_cache_callbacks import RLCacheCallbacks
 
 
+# ============================== EXECUTION MODE ==============================
+# main.py --mode train : Train the neural network and save model to MODEL_PATH
+# main.py --mode test  : Load model from MODEL_PATH and run evaluation only
+# main.py --mode both  : Train → save model → evaluate (default, legacy behavior)
+# ============================================================================
+
 # ============================== TRAINING / EVALUATION SPLIT ==============================
-# Phase 1: Training   (episodes 0 ~ NUM_TRAIN_EPISODES-1)
-#   - Neural network learns via REINFORCE
-#   - Exploration (epsilon-greedy) is active
-#   - Callbacks do NOT record hit ratios
-#
-# Phase 2: Evaluation  (episodes NUM_TRAIN_EPISODES ~ NUM_TRAIN_EPISODES+NUM_EVAL_EPISODES-1)
-#   - Neural network is FROZEN (no learning)
-#   - Exploration is OFF (greedy only)
-#   - Callbacks record hit ratios and save to NPZ
 NUM_TRAIN_EPISODES = 80         # Episodes for training (model learning)
 NUM_EVAL_EPISODES = 20          # Episodes for evaluation (performance measurement)
 NUM_EPISODES = NUM_TRAIN_EPISODES + NUM_EVAL_EPISODES   # Total episodes (= 100)
 EPISODE_MEASUREMENT_BEGIN = NUM_TRAIN_EPISODES           # Callbacks start recording here
 # =========================================================================================
+
+# ============================== MODEL SAVE / LOAD ==============================
+MODEL_PATH = 'model.pt'         # Path to save/load trained neural network model
+# ===============================================================================
 
 # ============================== ICARUSGYM ENVIRONMENT ==============================
 N_CONTENTS = 100                                    # Number of contents (IDs: 1 to N_CONTENTS)

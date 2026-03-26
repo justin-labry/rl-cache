@@ -50,12 +50,34 @@ pip install torch h5py
 ```bash
 source .venv/bin/activate
 cd experiments/experiment0
-python main.py
+
+# Train → save model → evaluate (default)
+python main.py --mode both
+
+# Train only: train NN and save to model.pt
+python main.py --mode train
+
+# Test only: load model.pt and evaluate
+python main.py --mode test
 ```
 
-Training and measurement are controlled by `config.py`:
-- `NUM_EPISODES`: total iterations
-- `EPISODE_MEASUREMENT_BEGIN`: episodes before this are training-only; after this, measurement begins
+### Train / Test Workflow
+
+```
+python main.py --mode train
+  └─ NUM_TRAIN_EPISODES (80) episodes
+  └─ Saves trained NN to model.pt
+
+python main.py --mode test
+  └─ Loads model.pt (no training, no exploration)
+  └─ NUM_EVAL_EPISODES (20) episodes
+  └─ Saves hit ratio results to results_rl_cache.npz
+```
+
+Configuration is in `config.py`:
+- `NUM_TRAIN_EPISODES`: number of training episodes
+- `NUM_EVAL_EPISODES`: number of evaluation episodes
+- `MODEL_PATH`: path to save/load the trained model (default: `model.pt`)
 
 
 ## Project Structure
