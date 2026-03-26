@@ -531,7 +531,7 @@ class RLCachePolicy(Policy):
 
         :param path: File path to load the model from (e.g., 'model.pt')
         """
-        checkpoint = torch.load(path, map_location=self._device)
+        checkpoint = torch.load(path, map_location=self._device, weights_only=False)
 
         # Restore neural network weights
         self._net.load_state_dict(checkpoint['net_state_dict'])
