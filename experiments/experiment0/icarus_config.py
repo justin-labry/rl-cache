@@ -17,7 +17,7 @@ from collections import deque
 from icarus.util import Tree
 
 # ============================== SIMULATION PARAMETERS ==============================
-N_CONTENTS = 100                        # Number of contents (IDs: 1 to N_CONTENTS)
+N_CONTENTS = 1000                       # Number of contents (IDs: 1 to N_CONTENTS)
 WORKLOAD_N_WARM_UP = 0                  # Warm-up requests (0 = no warm-up)
 WORKLOAD_N_MEASURED = N_CONTENTS * 20   # Measured requests per episode (2000)
 WORKLOAD_NAME = 'STATIONARY'            # Stationary Zipf workload

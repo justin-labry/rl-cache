@@ -45,10 +45,12 @@ class RLCacheCallbacks(DefaultCallbacks):
     def on_episode_start(self, worker: RolloutWorker, base_env: BaseEnv, policies: Dict[str, Policy],
                          episode: Episode, **kwargs):
         self._policy = policies['default_policy']
-        if self._episode_seq_num == 0:
-            # Array size is n+1 to accommodate content IDs from 0 to n (inclusive)
-            self._request_nums = np.zeros(shape=self._policy.n + 1, dtype=np.int32)
-            self._hit_nums = np.zeros(shape=self._policy.n + 1, dtype=np.int32)
+        # n+1 slots for content IDs 0..n (1-based catalog). Reallocate if policy.n
+        # changes (e.g. load_model after train; train→test continues at episode 300).
+        need = self._policy.n + 1
+        if self._request_nums is None or self._request_nums.shape[0] != need:
+            self._request_nums = np.zeros(shape=need, dtype=np.int32)
+            self._hit_nums = np.zeros(shape=need, dtype=np.int32)
         self._episode_measurement_begin = self._policy.config['callbacks_config']['episode_measurement_begin']
         self._result_output_file_name = self._policy.config['callbacks_config']['result_output_file_name']
         self._workload_n_warm_up = self._policy.config['callbacks_config'].get('workload_n_warm_up', 0)
@@ -114,7 +116,9 @@ class RLCacheCallbacks(DefaultCallbacks):
     def on_episode_end(self, worker: RolloutWorker, base_env: BaseEnv, policies: Dict[str, Policy],
                        episode: Episode, **kwargs):
         if self._episode_seq_num >= self._episode_measurement_begin:
-            n_contents = self._policy.config.get('n', self._policy.n - 1)
+            # Use policy.n - 1, not policy.config['n']: RLlib may merge keys so
+            # config['n'] can disagree with RLCachePolicy (e.g. cache_size vs catalog size).
+            n_contents = self._policy.n - 1
             if n_contents <= 0:
                 n_contents = self._policy.n
 

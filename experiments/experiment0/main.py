@@ -35,12 +35,19 @@ def env_creator(env_config):
     return gym.make(id='TtlCache-v0', config=env_config)
 
 
-def create_agent(conf):
+def create_agent(conf, episode_measurement_begin=None):
     """Create and configure the RLCacheAgent.
 
     :param conf: Configuration module (experiments.experiment0.config)
+    :param episode_measurement_begin: Override when to start recording (default: conf).
+        Use 0 for --mode test so eval episodes 0..N-1 save results (train uses conf value).
     :return: Configured RLCacheAgent instance
     """
+    measurement_begin = (
+        conf.EPISODE_MEASUREMENT_BEGIN
+        if episode_measurement_begin is None
+        else episode_measurement_begin
+    )
     experiment_dir = os.path.dirname(os.path.abspath(__file__))
     env_config = {
         'config_path': os.path.join(experiment_dir, conf.TTLSIM_CONFIG_PATH),
@@ -55,7 +62,7 @@ def create_agent(conf):
         # Callbacks
         'callbacks': conf.CALLBACKS,
         'callbacks_config': {
-            'episode_measurement_begin': conf.EPISODE_MEASUREMENT_BEGIN,
+            'episode_measurement_begin': measurement_begin,
             'result_output_file_name': conf.RESULT_OUTPUT_FILE_NAME
         },
 
@@ -183,7 +190,10 @@ def main():
     register_env('TtlCache-v0', env_creator)
 
     # Create the agent
-    agent = create_agent(conf)
+    agent = create_agent(
+        conf,
+        episode_measurement_begin=0 if args.mode == 'test' else None,
+    )
 
     try:
         print('=' * 70)

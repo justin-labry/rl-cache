@@ -533,6 +533,11 @@ class RLCachePolicy(Policy):
         """
         checkpoint = torch.load(path, map_location=self._device, weights_only=False)
 
+        # Internal index bound (catalog size + 1) must match saved tensors; RLlib may
+        # alter policy.config['n'] after __init__, so restore from checkpoint first.
+        if 'n' in checkpoint:
+            self._n = int(checkpoint['n'])
+
         # Restore neural network weights
         self._net.load_state_dict(checkpoint['net_state_dict'])
 

@@ -22,8 +22,8 @@ from rl_cache.evaluation.rl_cache_callbacks import RLCacheCallbacks
 # ============================================================================
 
 # ============================== TRAINING / EVALUATION SPLIT ==============================
-NUM_TRAIN_EPISODES = 80         # Episodes for training (model learning)
-NUM_EVAL_EPISODES = 20          # Episodes for evaluation (performance measurement)
+NUM_TRAIN_EPISODES = 300         # Episodes for training (model learning)
+NUM_EVAL_EPISODES = 50          # Episodes for evaluation (performance measurement)
 NUM_EPISODES = NUM_TRAIN_EPISODES + NUM_EVAL_EPISODES   # Total episodes (= 100)
 EPISODE_MEASUREMENT_BEGIN = NUM_TRAIN_EPISODES           # Callbacks start recording here
 # =========================================================================================
@@ -33,7 +33,7 @@ MODEL_PATH = 'model.pt'         # Path to save/load trained neural network model
 # ===============================================================================
 
 # ============================== ICARUSGYM ENVIRONMENT ==============================
-N_CONTENTS = 100                                    # Number of contents (IDs: 1 to N_CONTENTS)
+N_CONTENTS = 1000                                    # Number of contents (IDs: 1 to N_CONTENTS)
 WORKLOAD_N_MEASURED = N_CONTENTS * 20               # Requests per episode (2000)
 CACHE_RATIO = 0.1                                   # Cache size ratio
 
