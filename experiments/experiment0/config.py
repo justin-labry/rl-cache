@@ -22,8 +22,8 @@ from rl_cache.evaluation.rl_cache_callbacks import RLCacheCallbacks
 # ============================================================================
 
 # ============================== TRAINING / EVALUATION SPLIT ==============================
-NUM_TRAIN_EPISODES = 300         # Episodes for training (model learning)
-NUM_EVAL_EPISODES = 50          # Episodes for evaluation (performance measurement)
+NUM_TRAIN_EPISODES = 1000         # Episodes for training (model learning)
+NUM_EVAL_EPISODES = 200          # Episodes for evaluation (performance measurement)
 NUM_EPISODES = NUM_TRAIN_EPISODES + NUM_EVAL_EPISODES   # Total episodes (= 100)
 EPISODE_MEASUREMENT_BEGIN = NUM_TRAIN_EPISODES           # Callbacks start recording here
 # =========================================================================================
@@ -34,7 +34,7 @@ MODEL_PATH = 'model.pt'         # Path to save/load trained neural network model
 
 # ============================== ICARUSGYM ENVIRONMENT ==============================
 N_CONTENTS = 1000                                    # Number of contents (IDs: 1 to N_CONTENTS)
-WORKLOAD_N_MEASURED = N_CONTENTS * 20               # Requests per episode (2000)
+WORKLOAD_N_MEASURED = N_CONTENTS * 20               # Requests per episode (20000)
 CACHE_RATIO = 0.1                                   # Cache size ratio
 
 TTLSIM_CONFIG_PATH = 'icarus_config.py'             # Icarus simulator config (SEPARATE file)
@@ -53,14 +53,14 @@ CALLBACKS = RLCacheCallbacks
 RESULT_OUTPUT_FILE_NAME = 'results_rl_cache'
 
 # Neural network architecture (RL-Cache paper: 5 hidden layers)
-FEATURE_DIM = 6         # Input feature dimension [size, logFreq, lambda, recency, ttl, hit]
+FEATURE_DIM = 8         # Input feature dimension [logSize, logFreq, lambda, recency, ttl, hit, freq/size, freq*size]
 HIDDEN_DIM = 64         # Hidden layer dimension
 NUM_LAYERS = 5          # Number of hidden layers
 
 # Training hyperparameters
 LR = 1e-3               # Learning rate (Adam optimizer)
 GAMMA = 0.99            # Discount factor for REINFORCE
-ENTROPY_COEFF = 0.01    # Entropy regularization coefficient
+ENTROPY_COEFF = 0.2     # Entropy regularization coefficient (0.01 → 0.2: prevent policy collapse)
 
 # Feature normalization
 MAX_LAMBDA = 10.0       # Max arrival rate for feature clipping
@@ -73,5 +73,5 @@ REJECT_TTL = 0.1        # TTL when rejecting content (effectively not caching)
 # NOTE: During eval phase, exploration is forced to 0 regardless of these values
 EXPLORE_START = 1.0     # Initial exploration rate (100% random at start)
 EXPLORE_END = 0.05      # Final exploration rate (5% random)
-EXPLORE_DECAY = 10000   # Decay half-life in steps (~5 episodes)
+EXPLORE_DECAY = 200000  # Decay half-life in steps (10000 → 200000: ~10 episodes to reach minimum)
 # ============================================================================

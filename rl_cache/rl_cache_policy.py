@@ -152,6 +152,7 @@ class RLCachePolicy(Policy):
         self._prev_env_time = 0.0
         self._episode_count = 0
         self._total_steps = 0
+        self._max_observed_size = 1.0   # Running max for size normalization
 
         # Exploration: epsilon-greedy schedule
         self._explore_start = config.get('explore_start', 1.0)    # Initial exploration rate
@@ -197,17 +198,23 @@ class RLCachePolicy(Policy):
             obs[0] = env_time     (simulation time)
             obs[1] = content_id   (1-indexed)
             obs[2] = weight       (content weight/importance)
-            obs[3] = size         (content size)
+            obs[3] = size         (content size in bytes)
             obs[4] = remaining_ttl (remaining TTL if cached, else negative)
             obs[5] = hit          (1.0 if cache hit, 0.0 if miss)
 
-        All features are normalized to reasonable ranges to ensure stable neural network training:
-            - size: as-is (typically ~1.0 in IcarusGym)
-            - frequency: log(1 + count) to prevent unbounded growth
-            - arrival_rate: clipped lambda, bounded in [0, max_lambda]
-            - recency: 1/(1 + delta_t), naturally bounded in [0, 1]
-            - remaining_ttl: normalized by admit_ttl, bounded in [0, 1]
-            - hit: binary indicator, already in {0, 1}
+        Feature vector (8-dim, all normalized to ~[0,1]):
+            [0] log_size      - log(size) / log(max_size), captures size magnitude [0,1]
+            [1] log_frequency - log(1+count) / log(1+max_count) [0,1]
+            [2] arrival_rate  - estimated lambda / max_lambda [0,1]
+            [3] recency       - 1/(1+time_since_last) [0,1]
+            [4] remaining_ttl - normalized by admit_ttl [0,1]
+            [5] hit           - cache hit indicator {0,1}
+            [6] freq_per_size - (frequency/size) normalized, captures "value density"
+            [7] freq_x_size   - (frequency*size) normalized, captures "cache cost"
+
+        Features [6] and [7] are inspired by RL-Cache (Kirilin et al., 2019)
+        which uses f/s and f*s to help the NN reason about the trade-off
+        between content popularity and its cache footprint.
 
         :param obs: Raw observation from IcarusGym
         :return: Tuple of (content_id, normalized_feature_vector)
@@ -215,7 +222,7 @@ class RLCachePolicy(Policy):
         env_time = obs[0]
         i = int(obs[1])         # Content ID (1-indexed)
         w = obs[2]              # Weight
-        s = obs[3]              # Size
+        s = max(obs[3], self._epsilon)  # Size (bytes), clamp to avoid log(0)
         r = obs[4]              # Remaining TTL
         hit = obs[5]            # Cache hit indicator
 
@@ -223,6 +230,12 @@ class RLCachePolicy(Policy):
         if env_time < self._prev_env_time:
             self._prev_env_time = 0.0
             self._last_access_time = np.zeros(self._n, dtype=np.float64)
+            self._access_counts = np.zeros(self._n, dtype=np.int64)
+            self._max_observed_size = 1.0
+
+        # Track max observed size for normalization
+        if s > self._max_observed_size:
+            self._max_observed_size = s
 
         # Update per-content statistics
         self._access_counts[i] += 1
@@ -245,14 +258,31 @@ class RLCachePolicy(Policy):
         else:
             lambda_est = 0.0
 
-        # Build NORMALIZED feature vector (all features in reasonable ranges for NN training)
+        # Normalized frequency (relative to most popular in this episode)
+        log_freq = math.log1p(float(self._access_counts[i]))
+        max_log_freq = max(math.log1p(float(np.max(self._access_counts))), self._epsilon)
+        norm_freq = log_freq / max_log_freq                            # [0, 1]
+
+        # Normalized log-size
+        log_size = math.log(s) / max(math.log(self._max_observed_size), self._epsilon)  # [0, 1]
+
+        # Composite features (RL-Cache paper: f/s and f*s)
+        # Normalize using log-scale to keep in reasonable range
+        freq_per_size = norm_freq / max(log_size, self._epsilon)       # high = popular & small
+        freq_per_size = min(freq_per_size, 1.0)                        # clamp to [0, 1]
+        freq_x_size = norm_freq * log_size                             # high = popular & large
+        # freq_x_size is naturally in [0, 1] since both factors are in [0, 1]
+
+        # Build 8-dim NORMALIZED feature vector
         features = np.array([
-            s,                                                          # Size (~1.0, stable)
-            math.log1p(float(self._access_counts[i])),                  # log(1+count), grows slowly
-            lambda_est / self._max_lambda,                              # Normalized arrival rate [0, 1]
-            1.0 / (1.0 + time_since_last),                             # Recency [0, 1]
-            min(max(r, 0.0) / max(self._admit_ttl, 1.0), 1.0),        # Normalized remaining TTL [0, 1]
-            float(hit),                                                 # Hit indicator {0, 1}
+            log_size,                                                   # [0] Log-size normalized [0, 1]
+            norm_freq,                                                  # [1] Log-frequency normalized [0, 1]
+            lambda_est / self._max_lambda,                              # [2] Arrival rate [0, 1]
+            1.0 / (1.0 + time_since_last),                             # [3] Recency [0, 1]
+            min(max(r, 0.0) / max(self._admit_ttl, 1.0), 1.0),        # [4] Remaining TTL [0, 1]
+            float(hit),                                                 # [5] Hit indicator {0, 1}
+            freq_per_size,                                              # [6] Frequency/size [0, 1]
+            freq_x_size,                                                # [7] Frequency*size [0, 1]
         ], dtype=np.float32)
 
         self._prev_env_time = env_time
