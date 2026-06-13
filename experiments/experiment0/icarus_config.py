@@ -132,6 +132,7 @@ WORKLOAD_NAME = 'NONSTATIONARY'         # Non-stationary Zipf workload
 ALPHA = 0.8                             # Zipf skewness parameter
 N_PHASES = 4                            # Number of popularity phases per episode
 RATE = 1.                               # Request arrival rate
+SEED = 42                               # Fixed seed for reproducibility
 CACHE_RATIO = 0.1                       # Cache size / number of contents
 TAU = 1.                                # Sliding time window for hit probability
 DEFAULT_WEIGHT = 1.                     # Default content weight
@@ -175,6 +176,7 @@ experiment['workload']['n_measured'] = WORKLOAD_N_MEASURED
 experiment['workload']['rate'] = RATE
 experiment['workload']['alpha'] = ALPHA
 experiment['workload']['n_phases'] = N_PHASES
+experiment['workload']['seed'] = SEED
 experiment['workload']['size_min'] = SIZE_MIN
 experiment['workload']['size_max'] = SIZE_MAX
 

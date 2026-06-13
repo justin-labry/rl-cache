@@ -8,7 +8,9 @@ DehghanCacheAlgorithm in the dehghan-cache project. It provides:
     - Training step that collects samples and trains the neural network policy
 
 Reference:
-    N. Beckmann et al., "RL-Cache: Learning-Based Cache Admission for Content Delivery"
+    V. Kirilin, A. Sundarrajan, S. Gorinsky, and R. K. Sitaraman, "RL-Cache: Learning-Based
+    Cache Admission for Content Delivery," NetAI 2019 (ACM SIGCOMM Workshop on Network Meets
+    AI & ML). Official implementation: https://github.com/quovadim/RL-Cache
 """
 
 # Author: labry

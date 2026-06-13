@@ -6,8 +6,9 @@ The policy uses a feedforward neural network to decide whether to admit content 
 by outputting a TTL value (high TTL = admit, low TTL = reject).
 
 This implementation is based on:
-    N. Beckmann et al., "RL-Cache: Learning-Based Cache Admission for Content Delivery,"
-    (Earlier ideas from the RL-based caching literature)
+    V. Kirilin, A. Sundarrajan, S. Gorinsky, and R. K. Sitaraman, "RL-Cache: Learning-Based
+    Cache Admission for Content Delivery," NetAI 2019 (ACM SIGCOMM Workshop on Network Meets
+    AI & ML). Official implementation: https://github.com/quovadim/RL-Cache
 
 Training strategy:
     - REINFORCE (Monte Carlo policy gradient) with episode-level hit rate as reward
@@ -36,6 +37,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from rl_cache.features import FeatureExtractor
 from ray.rllib.policy.policy import Policy
 from ray.rllib.policy.sample_batch import SampleBatch
 from ray.rllib.utils.annotations import DeveloperAPI, override
@@ -136,7 +138,12 @@ class RLCachePolicy(Policy):
         self._net = RLCacheNetwork(self._feature_dim, self._hidden_dim, self._num_layers).to(self._device)
         self._optimizer = torch.optim.Adam(self._net.parameters(), lr=self._lr)
 
-        # Per-content statistics (maintained across episodes for feature extraction)
+        # RL-Cache Table-1 feature extractor (shared with the MC trainer so that the
+        # features at eval exactly match those used during training). Reset per episode.
+        self._feature_extractor = FeatureExtractor(self._n)
+
+        # Legacy per-content statistics (kept for get_weights/save_model compatibility;
+        # no longer used by _extract_features, which now delegates to FeatureExtractor).
         self._access_counts = np.zeros(self._n, dtype=np.int64)        # Total access count per content
         self._last_access_time = np.zeros(self._n, dtype=np.float64)   # Last access time per content
         self._inter_arrival = np.zeros(self._n, dtype=np.float64)      # Estimated inter-arrival time
@@ -161,6 +168,28 @@ class RLCachePolicy(Policy):
 
         # Eval mode: when True, no exploration and no learning
         self._eval_mode = False
+
+        # Force-admit mode: when True, always admit (action=1), bypassing neural net.
+        # Used for the AdmitAll (LRU-equivalent) baseline.
+        self._force_admit = False
+
+        # SecondHit baseline: admit a content only on a repeated request (within
+        # _secondhit_window seconds of its previous sighting). Bypasses the neural net.
+        self._secondhit = False
+        self._secondhit_seen = {}       # content_id -> last seen env_time (this episode)
+        self._secondhit_window = config.get('secondhit_window', float('inf'))
+
+        # Optional request-sequence capture (off by default; zero behavior change).
+        # When set to a list, compute_actions appends one tuple per observed request:
+        #   (env_time, content_id, size, remaining_ttl, hit)
+        # Used to extract the exact trace IcarusGym processed for (a) validating the
+        # standalone training simulator and (b) feeding the Monte Carlo trainer.
+        self._capture_buffer = None
+
+        # Last episode metrics (updated by learn_on_batch); readable after each agent.train() call
+        # since agent.train() doesn't surface custom metrics at the top level.
+        self._last_hit_rate = float('nan')
+        self._last_policy_loss = float('nan')
 
         super().__init__(observation_space, action_space, config)
 
@@ -192,99 +221,30 @@ class RLCachePolicy(Policy):
             math.exp(-self._total_steps / max(self._explore_decay, 1))
 
     def _extract_features(self, obs: np.ndarray) -> tuple:
-        """Extract normalized feature vector from IcarusGym observation.
+        """Extract the RL-Cache Table-1 feature vector from an IcarusGym observation.
+
+        Delegates to the shared :class:`FeatureExtractor` so the features computed
+        online here are identical to those precomputed by the Monte Carlo trainer
+        (rl_cache.features). The features depend only on the request stream
+        (size, frequency, recency, their EMAs and composites), not on cache state.
 
         IcarusGym observation format:
-            obs[0] = env_time     (simulation time)
-            obs[1] = content_id   (1-indexed)
-            obs[2] = weight       (content weight/importance)
-            obs[3] = size         (content size in bytes)
-            obs[4] = remaining_ttl (remaining TTL if cached, else negative)
-            obs[5] = hit          (1.0 if cache hit, 0.0 if miss)
+            obs[0] = env_time, obs[1] = content_id (1-indexed), obs[2] = weight,
+            obs[3] = size, obs[4] = remaining_ttl, obs[5] = hit.
 
-        Feature vector (8-dim, all normalized to ~[0,1]):
-            [0] log_size      - log(size) / log(max_size), captures size magnitude [0,1]
-            [1] log_frequency - log(1+count) / log(1+max_count) [0,1]
-            [2] arrival_rate  - estimated lambda / max_lambda [0,1]
-            [3] recency       - 1/(1+time_since_last) [0,1]
-            [4] remaining_ttl - normalized by admit_ttl [0,1]
-            [5] hit           - cache hit indicator {0,1}
-            [6] freq_per_size - (frequency/size) normalized, captures "value density"
-            [7] freq_x_size   - (frequency*size) normalized, captures "cache cost"
-
-        Features [6] and [7] are inspired by RL-Cache (Kirilin et al., 2019)
-        which uses f/s and f*s to help the NN reason about the trade-off
-        between content popularity and its cache footprint.
-
-        :param obs: Raw observation from IcarusGym
-        :return: Tuple of (content_id, normalized_feature_vector)
+        :param obs: Raw observation from IcarusGym.
+        :return: Tuple of (content_id, 8-dim feature vector) matching FEATURE_DIM.
         """
-        env_time = obs[0]
-        i = int(obs[1])         # Content ID (1-indexed)
-        w = obs[2]              # Weight
-        s = max(obs[3], self._epsilon)  # Size (bytes), clamp to avoid log(0)
-        r = obs[4]              # Remaining TTL
-        hit = obs[5]            # Cache hit indicator
+        env_time = float(obs[0])
+        i = int(obs[1])                 # Content ID (1-indexed)
+        s = max(float(obs[3]), self._epsilon)
 
-        # Handle episode reset (env_time goes backward)
+        # Handle episode reset (env_time goes backward): restart running statistics.
         if env_time < self._prev_env_time:
-            self._prev_env_time = 0.0
-            self._last_access_time = np.zeros(self._n, dtype=np.float64)
-            self._access_counts = np.zeros(self._n, dtype=np.int64)
-            self._max_observed_size = 1.0
+            self._feature_extractor.reset()
+            self._secondhit_seen.clear()
 
-        # Track max observed size for normalization
-        if s > self._max_observed_size:
-            self._max_observed_size = s
-
-        # Update per-content statistics
-        self._access_counts[i] += 1
-        self._arrival_nums[i] += 1
-
-        # Compute inter-arrival time (tau)
-        if self._last_access_time[i] > 0:
-            tau = env_time - self._last_access_time[i]
-            if tau > 0:
-                self._tau_sums[i] += tau
-                self._inter_arrival[i] = self._tau_sums[i] / float(self._arrival_nums[i])
-
-        # Recency: time since last access (computed BEFORE updating last_access_time)
-        time_since_last = env_time - self._last_access_time[i] if self._last_access_time[i] > 0 else 0.0
-        self._last_access_time[i] = env_time
-
-        # Estimate arrival rate (lambda = 1/tau), clipped to prevent extreme values
-        if self._inter_arrival[i] > self._epsilon:
-            lambda_est = min(1.0 / self._inter_arrival[i], self._max_lambda)
-        else:
-            lambda_est = 0.0
-
-        # Normalized frequency (relative to most popular in this episode)
-        log_freq = math.log1p(float(self._access_counts[i]))
-        max_log_freq = max(math.log1p(float(np.max(self._access_counts))), self._epsilon)
-        norm_freq = log_freq / max_log_freq                            # [0, 1]
-
-        # Normalized log-size
-        log_size = math.log(s) / max(math.log(self._max_observed_size), self._epsilon)  # [0, 1]
-
-        # Composite features (RL-Cache paper: f/s and f*s)
-        # Normalize using log-scale to keep in reasonable range
-        freq_per_size = norm_freq / max(log_size, self._epsilon)       # high = popular & small
-        freq_per_size = min(freq_per_size, 1.0)                        # clamp to [0, 1]
-        freq_x_size = norm_freq * log_size                             # high = popular & large
-        # freq_x_size is naturally in [0, 1] since both factors are in [0, 1]
-
-        # Build 8-dim NORMALIZED feature vector
-        features = np.array([
-            log_size,                                                   # [0] Log-size normalized [0, 1]
-            norm_freq,                                                  # [1] Log-frequency normalized [0, 1]
-            lambda_est / self._max_lambda,                              # [2] Arrival rate [0, 1]
-            1.0 / (1.0 + time_since_last),                             # [3] Recency [0, 1]
-            min(max(r, 0.0) / max(self._admit_ttl, 1.0), 1.0),        # [4] Remaining TTL [0, 1]
-            float(hit),                                                 # [5] Hit indicator {0, 1}
-            freq_per_size,                                              # [6] Frequency/size [0, 1]
-            freq_x_size,                                                # [7] Frequency*size [0, 1]
-        ], dtype=np.float32)
-
+        features = self._feature_extractor.step(env_time, i, s)
         self._prev_env_time = env_time
         return i, features
 
@@ -322,6 +282,12 @@ class RLCachePolicy(Policy):
             i, features = self._extract_features(obs)
             hit = obs[5]
 
+            # Optional trace capture (raw observation, before any decision logic).
+            if self._capture_buffer is not None:
+                self._capture_buffer.append(
+                    (float(obs[0]), int(obs[1]), float(obs[3]), float(obs[4]), float(obs[5]))
+                )
+
             # Neural network forward pass (INFERENCE ONLY - no gradient tracking)
             feat_tensor = torch.FloatTensor(features).unsqueeze(0).to(self._device)
             with torch.no_grad():
@@ -330,7 +296,17 @@ class RLCachePolicy(Policy):
             # Clamp probability to avoid log(0)
             p_admit = max(self._epsilon, min(1.0 - self._epsilon, p_admit))
 
-            if self._eval_mode:
+            if self._force_admit:
+                # BASELINE MODE: always admit (AdmitAll / LRU-equivalent)
+                action = 1
+            elif self._secondhit:
+                # BASELINE MODE: SecondHit -- admit only on a repeated request
+                # whose previous sighting is within the retention window.
+                prev_t = self._secondhit_seen.get(i)
+                action = 1 if (prev_t is not None and
+                               (obs[0] - prev_t) <= self._secondhit_window) else 0
+                self._secondhit_seen[i] = obs[0]
+            elif self._eval_mode:
                 # EVAL MODE: greedy action (no exploration, no randomness)
                 action = 1 if p_admit >= 0.5 else 0
             else:
@@ -393,6 +369,7 @@ class RLCachePolicy(Policy):
         # In eval mode: compute metrics only, do NOT update network weights
         if self._eval_mode:
             hit_rate = np.mean(self._episode_rewards) if n_steps > 0 else 0.0
+            self._last_hit_rate = hit_rate
             self._episode_features = []
             self._episode_actions = []
             self._episode_rewards = []
@@ -455,6 +432,8 @@ class RLCachePolicy(Policy):
 
         # ---- Step 7: Compute metrics ----
         hit_rate = np.mean(self._episode_rewards)
+        self._last_hit_rate = hit_rate
+        self._last_policy_loss = total_loss.item()
         mean_p_admit = p_admit_batch.mean().item()
 
         # Clear episode buffers
@@ -567,6 +546,8 @@ class RLCachePolicy(Policy):
         # alter policy.config['n'] after __init__, so restore from checkpoint first.
         if 'n' in checkpoint:
             self._n = int(checkpoint['n'])
+            # Resize the feature extractor to match the restored catalog bound.
+            self._feature_extractor = FeatureExtractor(self._n)
 
         # Restore neural network weights
         self._net.load_state_dict(checkpoint['net_state_dict'])

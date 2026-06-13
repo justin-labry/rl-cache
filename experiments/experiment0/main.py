@@ -35,7 +35,7 @@ def env_creator(env_config):
     return gym.make(id='TtlCache-v0', config=env_config)
 
 
-def create_agent(conf, episode_measurement_begin=None):
+def create_agent(conf, episode_measurement_begin=None, result_output_file_name=None):
     """Create and configure the RLCacheAgent.
 
     :param conf: Configuration module (experiments.experiment0.config)
@@ -63,7 +63,7 @@ def create_agent(conf, episode_measurement_begin=None):
         'callbacks': conf.CALLBACKS,
         'callbacks_config': {
             'episode_measurement_begin': measurement_begin,
-            'result_output_file_name': conf.RESULT_OUTPUT_FILE_NAME
+            'result_output_file_name': result_output_file_name or conf.RESULT_OUTPUT_FILE_NAME
         },
 
         # Cache / environment parameters
@@ -112,14 +112,15 @@ def run_train(agent, conf):
     print(f'\n[TRAIN] Training ({conf.NUM_TRAIN_EPISODES} episodes)...')
     print('-' * 70)
 
+    policy = agent.get_policy('default_policy')
     model_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), conf.MODEL_PATH)
 
     for ep in range(conf.NUM_TRAIN_EPISODES):
-        results = agent.train()
+        agent.train()
 
-        hit_rate = results.get('hit_rate', float('nan'))
-        explore_rate = results.get('explore_rate', float('nan'))
-        policy_loss = results.get('policy_loss', float('nan'))
+        hit_rate = policy._last_hit_rate
+        policy_loss = policy._last_policy_loss
+        explore_rate = policy._get_explore_rate()
 
         print(f'  [TRAIN] Episode {ep + 1:3d}/{conf.NUM_TRAIN_EPISODES} | '
               f'Hit Rate: {hit_rate:.4f} | '
@@ -153,9 +154,9 @@ def run_test(agent, conf):
 
     eval_hit_rates = []
     for ep in range(conf.NUM_EVAL_EPISODES):
-        results = agent.train()  # train() drives the episode loop; policy ignores learning in eval mode
+        agent.train()  # drives the episode loop; policy ignores learning in eval mode
 
-        hit_rate = results.get('hit_rate', float('nan'))
+        hit_rate = policy._last_hit_rate
         eval_hit_rates.append(hit_rate)
 
         print(f'  [TEST]  Episode {ep + 1:3d}/{conf.NUM_EVAL_EPISODES} | '
@@ -167,11 +168,43 @@ def run_test(agent, conf):
     return mean_eval_hit_rate
 
 
+def run_baseline(agent, conf):
+    """Run LRU-equivalent baseline: always admit, no learning.
+
+    Sets the force_admit flag on the policy so every request receives
+    ADMIT_TTL, making the size-aware TTL cache behave like LRU.
+    This provides a fair baseline comparison on the same cache and workload.
+
+    :param agent: RLCacheAgent instance
+    :param conf: Configuration module
+    """
+    policy = agent.get_policy('default_policy')
+    policy.set_eval_mode(True)
+    policy._force_admit = True
+
+    print(f'\n[BASELINE] LRU-equivalent evaluation ({conf.NUM_EVAL_EPISODES} episodes)...')
+    print('-' * 70)
+
+    eval_hit_rates = []
+    for ep in range(conf.NUM_EVAL_EPISODES):
+        agent.train()
+        hit_rate = policy._last_hit_rate
+        eval_hit_rates.append(hit_rate)
+        print(f'  [BASELINE] Episode {ep + 1:3d}/{conf.NUM_EVAL_EPISODES} | '
+              f'Hit Rate: {hit_rate:.4f}')
+
+    valid = [h for h in eval_hit_rates if h == h]  # filter NaN
+    mean_hit = sum(valid) / len(valid) if valid else 0.0
+    print(f'\n  Mean baseline hit rate: {mean_hit:.4f}')
+    return mean_hit
+
+
 def main():
     """Main entry point."""
     parser = argparse.ArgumentParser(description='RL-Cache Experiment')
-    parser.add_argument('--mode', type=str, default='both', choices=['train', 'test', 'both'],
-                        help='Execution mode: train (train+save), test (load+eval), both (train+save+eval)')
+    parser.add_argument('--mode', type=str, default='both',
+                        choices=['train', 'test', 'both', 'baseline'],
+                        help='Execution mode: train, test, both, or baseline (LRU-equivalent always-admit)')
     args = parser.parse_args()
 
     # Configure logging
@@ -189,10 +222,12 @@ def main():
     # Register the custom environment
     register_env('TtlCache-v0', env_creator)
 
-    # Create the agent
+    # Create the agent (baseline uses a separate results file to avoid overwriting RL-Cache results)
+    result_file = 'results_lru_baseline' if args.mode == 'baseline' else None
     agent = create_agent(
         conf,
-        episode_measurement_begin=0 if args.mode == 'test' else None,
+        episode_measurement_begin=0 if args.mode in ('test', 'baseline') else None,
+        result_output_file_name=result_file,
     )
 
     try:
@@ -219,6 +254,10 @@ def main():
             # Full pipeline: train → save → eval
             run_train(agent, conf)
             run_test(agent, conf)
+
+        elif args.mode == 'baseline':
+            # LRU-equivalent baseline: always admit, no learning
+            run_baseline(agent, conf)
 
         total_time = time.time() - start_time
         print('\n' + '=' * 70)

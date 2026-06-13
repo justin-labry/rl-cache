@@ -22,7 +22,7 @@ from rl_cache.evaluation.rl_cache_callbacks import RLCacheCallbacks
 # ============================================================================
 
 # ============================== TRAINING / EVALUATION SPLIT ==============================
-NUM_TRAIN_EPISODES = 1000         # Episodes for training (model learning)
+NUM_TRAIN_EPISODES = 3000         # Episodes for training (more iterations for convergence)
 NUM_EVAL_EPISODES = 200          # Episodes for evaluation (performance measurement)
 NUM_EPISODES = NUM_TRAIN_EPISODES + NUM_EVAL_EPISODES   # Total episodes (= 100)
 EPISODE_MEASUREMENT_BEGIN = NUM_TRAIN_EPISODES           # Callbacks start recording here
@@ -58,9 +58,9 @@ HIDDEN_DIM = 64         # Hidden layer dimension
 NUM_LAYERS = 5          # Number of hidden layers
 
 # Training hyperparameters
-LR = 1e-3               # Learning rate (Adam optimizer)
+LR = 5e-4               # Learning rate (Adam optimizer)
 GAMMA = 0.99            # Discount factor for REINFORCE
-ENTROPY_COEFF = 0.2     # Entropy regularization coefficient (0.01 → 0.2: prevent policy collapse)
+ENTROPY_COEFF = 0.1    # Entropy regularization (0.01=collapse, 0.2=too strong, 0.05=balanced)
 
 # Feature normalization
 MAX_LAMBDA = 10.0       # Max arrival rate for feature clipping
@@ -73,5 +73,5 @@ REJECT_TTL = 0.1        # TTL when rejecting content (effectively not caching)
 # NOTE: During eval phase, exploration is forced to 0 regardless of these values
 EXPLORE_START = 1.0     # Initial exploration rate (100% random at start)
 EXPLORE_END = 0.05      # Final exploration rate (5% random)
-EXPLORE_DECAY = 200000  # Decay half-life in steps (10000 → 200000: ~10 episodes to reach minimum)
+EXPLORE_DECAY = 50000   # Decay half-life in steps (explore finishes ~2.5 episodes, balanced)
 # ============================================================================
