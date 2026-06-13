@@ -95,22 +95,66 @@ pip install torch h5py
 
 ## Run
 
+Run from the repo root with the venv active. (The MC trainer is `train_mc.py`;
+`main.py --mode train` is the legacy REINFORCE prototype, kept for reference.)
+
 ```bash
 source .venv/bin/activate
-cd experiments/experiment0
+cd /home/labry/git/rl-cache
+E=experiments/experiment0
 
-# Validate the standalone simulator against IcarusGym (de-risk spike)
-python validate_sim.py
+# 0. One-time: extract the deterministic SEED=42 request trace -> trace_seed42.npz
+python $E/extract_trace.py
 
-# Train (MC elite-sampling on the standalone sim) → save model.pt
-python main.py --mode train
+# 1. (optional) Validate the standalone simulator reproduces IcarusGym
+python $E/validate_sim.py
 
-# Evaluate the trained model in IcarusGym → results_rl_cache.npz
-python main.py --mode test
+# 2. Train RL-Cache with Monte Carlo elite-sampling -> model.pt
+#    (seed sweep + best-checkpoint; object-hit reward. Use --reward-mode bhr for byte hit rate.)
+python $E/train_mc.py --K 1000 --m 400 --L 3000 --q 4 --passes 6 --seed 0
 
-# AdmitAll / LRU-equivalent baseline (force-admit, no learning)
-python main.py --mode baseline
+# 3. Compare RL-Cache vs AdmitAll/SecondHit, and sweep cache sizes (OHR + BHR)
+python $E/compare_baselines.py
+python $E/sweep_cache_size.py
+
+# IcarusGym-native eval (slower; full gym rollout instead of the validated sim)
+python $E/main.py --mode test
 ```
+
+### Plotting the per-content hit-probability figure
+
+```bash
+# 1. Evaluate a policy -> per-content NPZ in the repo root (via the validated simulator)
+python $E/eval_sim.py                                  # RL-Cache (model.pt) -> results_rl_cache.npz
+python $E/eval_sim.py --policy admitall  --out results_admitall
+python $E/eval_sim.py --model model_bhr.pt --out results_rl_cache_bhr   # a BHR-trained model
+
+# 2. Plot it -> PNG in the repo root (x = Content ID, y = hit probability, both log)
+python $E/plots/plot_results.py                                        # results_rl_cache.npz -> .png
+python $E/plots/plot_results.py --input results_rl_cache_bhr --label "RL-Cache (BHR)"
+```
+
+The legend reports the per-request hit rate (OHR). Note: with the size-aware,
+non-stationary workload a faithful RL-Cache admits by object size rather than by
+popularity, so hit probability is scattered across Content IDs (small objects hit,
+large objects are rejected) rather than decreasing smoothly with ID.
+
+### Other figures
+
+```bash
+# Learned size threshold: mean P(admit) and hit rate vs object size
+python $E/plots/plot_hit_vs_size.py                    # model.pt -> results_rl_cache_vs_size.png
+# (a BHR-trained model first needs: python $E/train_mc.py --reward-mode bhr --out model_bhr.pt --force)
+python $E/plots/plot_hit_vs_size.py --model model_bhr.pt --out results_size_bhr.png
+
+# OHR vs BHR across cache sizes (grouped bars; reads sweep_results.json from sweep_cache_size.py)
+python $E/plots/plot_sweep.py                          # -> results_ohr_bhr_sweep.png
+```
+
+`plot_hit_vs_size.py` shows the admission probability falling from ~1 to ~0 as
+object size grows (the learned threshold) with hit rate following. `plot_sweep.py`
+shows the OHR/BHR mirror image: RL-Cache (OHR-reward) dominates object hit rate
+while RL-Cache (BHR-reward) recovers byte hit rate toward AdmitAll.
 
 
 ## Project structure

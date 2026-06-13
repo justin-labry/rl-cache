@@ -128,6 +128,14 @@ def main():
         print(f'{ratio:6.2f} {csize:6d} {name:15s} {ohr:9.4f} {bhr:9.4f} {admit * 100:7.1f}%')
     print('=' * 78)
 
+    # Save structured results for plotting (plot_sweep.py).
+    import json
+    out_json = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'sweep_results.json')
+    with open(out_json, 'w') as f:
+        json.dump([{'ratio': r, 'cache_size': c, 'policy': n, 'ohr': o, 'bhr': b, 'admit_frac': a}
+                   for r, c, n, o, b, a in rows], f, indent=2)
+    print(f'Saved {out_json}')
+
 
 if __name__ == '__main__':
     main()
