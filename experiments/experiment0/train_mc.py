@@ -88,6 +88,8 @@ def main():
                     choices=['advantage', 'marginal'],
                     help='advantage = level-pinned selectivity (default); marginal = paper-literal BCE')
     ap.add_argument('--adv-gain', type=float, default=2.0, help='spread of advantage targets')
+    ap.add_argument('--reward-mode', type=str, default='ohr', choices=['ohr', 'bhr'],
+                    help='rank decision samples by object hit rate (ohr) or byte hit rate (bhr)')
     ap.add_argument('--seed', type=int, default=0, help='seed for net init + sampling (reproducibility)')
     ap.add_argument('--out', type=str, default=conf.MODEL_PATH)
     ap.add_argument('--force', action='store_true',
@@ -124,6 +126,7 @@ def main():
         default_size=icarus_conf.DEFAULT_SIZE,
         K=args.K, m=args.m, p_percentile=args.p, L=args.L, gamma=args.gamma, q=args.q,
         target_mode=args.target_mode, adv_gain=args.adv_gain, seed=args.seed,
+        reward_mode=args.reward_mode,
     )
 
     print(f'\nMC training: K={args.K} m={args.m} L={args.L} p={args.p}% q={args.q} '

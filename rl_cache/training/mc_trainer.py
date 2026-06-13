@@ -60,7 +60,7 @@ class MCTrainer:
                  default_size=1.0, extra_cache_size_ratio=0.001,
                  K=1000, m=100, p_percentile=20.0, L=2000, gamma=0.99997,
                  q=4, grad_clip=1.0, device='cpu', seed=0,
-                 target_mode='advantage', adv_gain=2.0):
+                 target_mode='advantage', adv_gain=2.0, reward_mode='ohr'):
         self.net = net
         self.opt = optimizer
         self.trace = trace
@@ -87,6 +87,12 @@ class MCTrainer:
         #                           toward admit-all at small scale)
         self.target_mode = target_mode
         self.adv_gain = float(adv_gain)
+        # reward_mode: 'ohr' scores rollouts by object hit rate (each hit counts 1);
+        #              'bhr' scores by byte hit rate (each hit counts the object's size).
+        # Only the SAMPLE-RANKING metric changes -- same network, features, cache,
+        # and elite-imitation. This lets RL-Cache target either metric (the original's
+        # hit-based reward generalizes to a byte-weighted reward).
+        self.reward_mode = reward_mode
 
     # ---- cache helpers -------------------------------------------------------
     def _new_cache(self):
@@ -121,14 +127,15 @@ class MCTrainer:
         p_tail: greedy decisions for the L tail are derived from probs >= 0.5.
         """
         cache = copy.deepcopy(base_cache)
+        bhr = self.reward_mode == 'bhr'
         score = 0.0
         end_k = min(start + self.K, self.n)
-        # K window: full weight.
+        # K window: full weight (object hit = 1, or byte hit = object size).
         for j in range(start, end_k):
             t, c, s = self.trace[j]
             hit, _ = cache.step(t, c, s, self._ttl_for(k_decisions[j - start]), self.cache_size)
             if hit:
-                score += 1.0
+                score += s if bhr else 1.0
         # L tail: greedy decisions, discounted by gamma^(i-K).
         end_l = min(end_k + self.L, self.n)
         for idx, j in enumerate(range(end_k, end_l), start=1):
@@ -136,7 +143,7 @@ class MCTrainer:
             admit = 1 if p_tail[j - end_k] >= 0.5 else 0
             hit, _ = cache.step(t, c, s, self._ttl_for(admit), self.cache_size)
             if hit:
-                score += (self.gamma ** idx)
+                score += (s if bhr else 1.0) * (self.gamma ** idx)
         return score
 
     def _greedy_eval_full(self):
@@ -150,10 +157,18 @@ class MCTrainer:
         greedy = (p >= 0.5).astype(np.int64)
         cache = self._new_cache()
         hits = 0
+        hit_bytes = 0.0
+        total_bytes = 0.0
         for k in range(self.n):
             t, c, s = self.trace[k]
             hit, _ = cache.step(t, c, s, self._ttl_for(greedy[k]), self.cache_size)
-            hits += 1 if hit else 0
+            total_bytes += s
+            if hit:
+                hits += 1
+                hit_bytes += s
+        # Select the checkpoint on the metric being optimized.
+        if self.reward_mode == 'bhr':
+            return hit_bytes / total_bytes if total_bytes else 0.0
         return hits / self.n
 
     def _refill(self, upto):

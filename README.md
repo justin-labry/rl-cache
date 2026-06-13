@@ -118,32 +118,72 @@ python main.py --mode baseline
 ```
 rl-cache/
 ├── rl_cache/                        # Core module
-│   ├── rl_cache_policy.py           # NN admission policy (RLlib Policy); trace-capture hook
+│   ├── rl_cache_policy.py           # NN admission policy (RLlib Policy); SecondHit mode; trace capture
 │   ├── rl_cache_agent.py            # RLlib algorithm wrapper
+│   ├── features.py                  # RL-Cache Table-1 features (shared by train + eval)
+│   ├── baselines.py                 # AdmitAll, SecondHit decision generators
 │   ├── training/
-│   │   └── ttl_sim.py               # Standalone TtlCache replica for MC training
+│   │   ├── ttl_sim.py               # Standalone TtlCache replica (OHR + BHR)
+│   │   └── mc_trainer.py            # Monte Carlo elite-sampling trainer (reward_mode ohr/bhr)
 │   └── evaluation/
 │       └── rl_cache_callbacks.py    # Metrics logging callbacks
 ├── experiments/
 │   └── experiment0/
-│       ├── main.py                  # Train / test / baseline entry point
+│       ├── main.py                  # RLlib entry point (legacy REINFORCE train / eval / baseline)
+│       ├── train_mc.py              # MC elite-sampling training -> model.pt
+│       ├── extract_trace.py         # Save the deterministic SEED=42 trace
 │       ├── validate_sim.py          # Spike: sim vs IcarusGym hit-rate equivalence
+│       ├── eval_quick.py            # Eval trained model in IcarusGym + sim cross-check
+│       ├── compare_baselines.py     # AdmitAll / SecondHit / RL-Cache comparison
+│       ├── sweep_cache_size.py      # OHR/BHR across cache sizes (OHR- and BHR-trained)
 │       ├── config.py                # Agent / experiment configuration
 │       └── icarus_config.py         # Icarus simulator configuration
 └── README.md
 ```
 
 
+## Results
+
+Experiment0 workload: non-stationary Zipf (α=0.8), 1000 contents, sizes log-uniform
+100 B–1 MB, size-aware byte-capacity TTL cache. Hit rates from the standalone
+simulator (validated to match IcarusGym within ~0.003); RL-Cache trained per cache
+size (seed sweep, best checkpoint). OHR = object hit rate, BHR = byte hit rate.
+
+| cache | policy | OHR | BHR |
+|:--|:--|--:|--:|
+| 10% | AdmitAll | 0.088 | **0.047** |
+| 10% | SecondHit | 0.091 | 0.048 |
+| 10% | **RL-Cache (OHR-reward)** | **0.165** | 0.005 |
+| 10% | RL-Cache (BHR-reward) | 0.041 | 0.041 |
+| 20% | AdmitAll | 0.145 | **0.097** |
+| 20% | **RL-Cache (OHR-reward)** | **0.210** | 0.021 |
+| 20% | RL-Cache (BHR-reward) | 0.070 | 0.089 |
+
+**Object vs byte hit rate is a reward choice.** With the object-hit reward (as in the
+original paper), RL-Cache learns a *size threshold* — admit ~all small objects, reject
+large ones (admit fraction by size quartile: 1.00 / 1.00 / 0.22 / 0.06) — maximizing
+OHR (+45–87% over AdmitAll) but serving almost no bytes from cache. Switching the
+reward to byte-hits flips the policy toward admitting large objects (Q4 admit 0.06 →
+0.90), recovering BHR ~9× while ceding OHR.
+
+On this workload object size and popularity are independent (corr ≈ −0.02) and 90.7%
+of requested bytes are in the largest size quartile, so for BHR there is no "harmful
+large" subset to reject and AdmitAll is near-optimal — RL-Cache (BHR) approaches but
+does not beat it. The original RL-Cache reports only object hit rate; surfacing this
+OHR/BHR tradeoff (and that the rich feature set collapses to a learned AdaptSize-style
+size threshold here) is what the IcarusGym evaluation adds.
+
+
 ## Status / roadmap
 
-Migration from the initial REINFORCE prototype to a faithful RL-Cache:
+Migration from the initial REINFORCE prototype to a faithful RL-Cache — complete:
 
 - [x] **0.** De-risk spike: standalone TTL sim reproduces IcarusGym 100% (force-admit)
-- [ ] **1.** MC elite-sampling trainer (replaces REINFORCE) — *in progress*
-- [ ] **2.** Align features to RL-Cache Table 1 (add ρ, d, δ)
-- [ ] **3.** Baselines: SecondHit + AdmitAll
+- [x] **1.** MC elite-sampling trainer (replaces REINFORCE; advantage target, best-checkpoint)
+- [x] **2.** Align features to RL-Cache Table 1 (size, freq, recency r/ρ, ordinal d/δ, f/s, f·s)
+- [x] **3.** Baselines: SecondHit + AdmitAll (native in IcarusGym + simulator)
 - [x] **4.** Cache substrate decision: keep TTL-reset (common with dehghan-cache)
-- [ ] **5.** Byte hit rate (BHR) + cache-size sweep
+- [x] **5.** Byte hit rate (BHR) + cache-size sweep; OHR- and BHR-reward variants
 - [x] **6.** Fix citations (Kirilin et al., NetAI 2019)
 
 

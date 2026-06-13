@@ -178,6 +178,8 @@ def simulate(requests, decisions, cache_size, admit_ttl, reject_ttl,
     rttls = [0.0] * n
     req_counts = {}
     hit_counts = {}
+    total_bytes = 0.0       # bytes of all requests (denominator of BHR)
+    hit_bytes = 0.0         # bytes served from cache (numerator of BHR)
 
     for k, (time, content, size) in enumerate(requests):
         admit = 1 if decisions is None else int(decisions[k])
@@ -186,14 +188,17 @@ def simulate(requests, decisions, cache_size, admit_ttl, reject_ttl,
         hits[k] = 1 if hit else 0
         rttls[k] = rttl
         req_counts[content] = req_counts.get(content, 0) + 1
+        total_bytes += size
         if hit:
             hit_counts[content] = hit_counts.get(content, 0) + 1
+            hit_bytes += size
 
     total_hits = sum(hits)
     return {
         'hits': hits,
         'remaining_ttls': rttls,
-        'hit_rate': total_hits / n if n else 0.0,
+        'hit_rate': total_hits / n if n else 0.0,          # object hit rate (OHR)
+        'byte_hit_rate': hit_bytes / total_bytes if total_bytes else 0.0,  # BHR
         'n_requests': n,
         'n_hits': total_hits,
         'request_counts': req_counts,
