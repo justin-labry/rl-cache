@@ -27,13 +27,21 @@ catalog bound (= #unique objects in the segment).
 - Venue decision: **IEEE TNSM** (#1), backups Computer Networks / Performance Evaluation. Framing = platform + comparative + findings.
 - Real-trace source vetting: workflow `wxa1xcsr7` (Wikipedia/LRB, Twitter OSDI'20, Akamai Tragen, SNIA) — **was still running at handoff; re-check / re-run for the final dataset pick.**
 
-## Recommended trace (knowledge-based, pending workflow confirmation)
-**Wikipedia CDN trace (LRB / D. Berger lineage)** — `timestamp object_id object_size`:
-- Matches our pipeline format exactly **and** the official `quovadim/RL-Cache` CSV format → drop-in.
-- Has **object sizes** (required for BHR), timestamps (recency).
-- Standard in ML-caching literature (AdaptSize NSDI'17, LHD NSDI'18, LRB NSDI'20) → high citability, reviewer-familiar.
-- **Backups:** Twitter cache traces (Yang et al., OSDI'20, github `twitter/cache-trace`; key+value sizes, TTL); Akamai **Tragen** (IMC'21; realistic CDN trace generator, same lineage as RL-Cache, avoids privacy/access issues).
-- ⚠️ Avoid sources lacking object sizes (unusable for BHR).
+## Recommended trace (verified 2026-06-17)
+> The automated trace-vetting workflow (`wxa1xcsr7`) **stalled** (survey agents hung mid web-search, no structured result); replaced by direct verification below.
+
+**#1 — open CDN cache traces via the cacheMon / libCacheSim hub** (Juncheng Yang et al.):
+- Repos: `github.com/cacheMon/cache_dataset`, `github.com/1a1a11a/libCacheSim`. Aggregates many open cache traces (incl. **Wikipedia/Wikimedia CDN**, Tencent Photo, etc.) in a **uniform format carrying `(time, obj_id, obj_size)`**, with libCacheSim to parse / replay / convert.
+- Has **object sizes** (BHR ✓) + timestamps; CDN framing matches RL-Cache; standard in modern caching papers (LRB NSDI'20). Cite **Song et al., LRB, NSDI 2020** / Yang et al.
+- Pipeline fit: convert to `timestamp object_id size` → drop-in (also the `quovadim/RL-Cache` CSV format).
+
+**#2 — Twitter production cache traces** (Yang et al., OSDI'20; `github.com/twitter/cache-trace`):
+- Plain-text CSV columns: `timestamp, anon_key, key_size, value_size, client_id, operation, TTL`. **Sizes ✓** (use value size, or key+value, for BHR). zstd-compressed; very large (use a representative segment).
+- Key-value (memcached) workload — not CDN. Best as a **second workload class** to show generality.
+
+**#3 — Akamai Tragen** (IMC'21; footprint descriptors, Sundarrajan et al. CoNEXT'17): realistic CDN trace **generator** calibrated to Akamai footprints — **same research lineage as RL-Cache**. Emits `(time, id, size)`; avoids privacy/access issues. Good fallback if real downloads are awkward.
+
+⚠️ All three carry object sizes (needed for BHR). Avoid block/storage traces lacking per-object sizes.
 
 ## TODO (next session)
 1. **Obtain the trace.** Download on an internet-capable machine (this .47 sandbox blocks outbound downloads; use a normal shell or `.212`). Normalize to `timestamp object_id object_size`.
