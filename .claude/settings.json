@@ -1,0 +1,40 @@
+{
+  "permissions": {
+    "defaultMode": "auto",
+    "additionalDirectories": [
+      "/home/labry/git/IcarusGym",
+      "/home/labry/git/icarus",
+      "/home/labry/git/GymProxy"
+    ],
+    "allow": [
+      "Bash(git *)",
+      "Bash(python *)",
+      "Bash(python3 *)",
+      "Bash(.venv/bin/python *)",
+      "Bash(/home/labry/git/rl-cache/.venv/bin/python *)",
+      "Bash(pip *)",
+      "Bash(pip3 *)",
+      "Bash(source *)",
+      "Bash(cd *)",
+      "Bash(ls *)",
+      "Bash(find *)",
+      "Bash(grep *)",
+      "Bash(wc *)",
+      "Bash(cat *)",
+      "Bash(head *)",
+      "Bash(tail *)",
+      "Bash(diff *)",
+      "Bash(jq *)",
+      "Bash(echo *)",
+      "Bash(mkdir *)",
+      "Bash(cp *)",
+      "Bash(mv *)",
+      "Bash(touch *)",
+      "Bash(timeout *)",
+      "Bash(pdfinfo *)",
+      "Bash(pdftotext *)",
+      "WebSearch",
+      "WebFetch"
+    ]
+  }
+}
