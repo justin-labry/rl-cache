@@ -33,6 +33,8 @@
       "Bash(timeout *)",
       "Bash(pdfinfo *)",
       "Bash(pdftotext *)",
+      "Bash(curl *)",
+      "Bash(wget *)",
       "WebSearch",
       "WebFetch"
     ]
